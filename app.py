@@ -1,5 +1,5 @@
 import matplotlib
-# 【重要】強制使用無介面後端，防止 Streamlit 崩潰
+# 1. 強制後端 (必須在最前面)
 matplotlib.use('Agg')
 
 import streamlit as st
@@ -11,151 +11,145 @@ import matplotlib.pyplot as plt
 import io
 from PIL import Image
 
-# 解除圖片像素限制
+# 2. 解除像素限制
 Image.MAX_IMAGE_PIXELS = None
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="股票籌碼分析儀", layout="wide")
-st.title("📊 股票技術分析 + 籌碼分布圖 (Volume Profile)")
+st.set_page_config(page_title="股票籌碼分析除錯版", layout="wide")
+st.title("📊 股票籌碼分析 (V4.0 除錯模式)")
 
 # --- 側邊欄 ---
 with st.sidebar:
-    st.header("參數設定")
-    ticker = st.text_input("股票代號", value="3167.TW").upper()
-    period = st.selectbox("資料區間", ["3mo", "6mo", "1y"], index=1)
-    st.info("💡 確保代號正確，例如台股需加 .TW")
+    st.header("設定")
+    ticker = st.text_input("股票代號", value="2330.TW").upper() # 改用台積電測試，確保一定有量
+    period = st.selectbox("區間", ["3mo", "6mo"], index=0)
+    st.warning("若看到文字但沒看到圖，請檢查下方錯誤訊息")
 
-# --- 1. 穩健的資料下載函數 ---
-@st.cache_data(ttl=600)
-def get_data(symbol, period):
+# --- 下載數據 ---
+@st.cache_data(ttl=60) # 縮短快取方便測試
+def get_data_debug(symbol, p):
+    st.write(f"📡 正在連接 Yahoo Finance 下載 {symbol}...")
     try:
-        # 下載資料，強制關閉多層索引
-        df = yf.download(symbol, period=period, auto_adjust=False, progress=False)
+        df = yf.download(symbol, period=p, progress=False, auto_adjust=False)
         
-        # 資料清洗：處理 yfinance 的多層欄位問題
+        if df.empty:
+            st.error("❌ 下載成功但資料為空 (Empty DataFrame)")
+            return None
+            
+        # 處理 MultiIndex
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
             
-        # 確保是日期索引
-        df.index = pd.to_datetime(df.index)
-        
-        # 檢查資料是否為空或過少
-        if df.empty or len(df) < 20:
-            return None
+        st.success(f"✅ 數據獲取成功: 共 {len(df)} 筆交易日")
+        # 顯示前幾筆資料確認數據真的存在
+        with st.expander("查看原始數據 (Debug)"):
+            st.dataframe(df.head())
             
         return df
     except Exception as e:
-        st.error(f"資料下載失敗: {e}")
+        st.error(f"❌ 數據下載崩潰: {e}")
         return None
 
-# --- 2. 核心繪圖函數 ---
-def create_plot(df, symbol):
-    # --- 計算技術指標 ---
-    close = df['Close']
-    df['MA20'] = close.rolling(20).mean()
-    df['STD20'] = close.rolling(20).std()
-    df['BB_Up'] = df['MA20'] + 2 * df['STD20']
-    df['BB_Lo'] = df['MA20'] - 2 * df['STD20']
-
-    # --- 計算籌碼分布 (Volume Profile) ---
-    # 這是畫出「橫向」柱狀圖的數學核心
-    price_bins = np.linspace(df['Low'].min(), df['High'].max(), 80)
-    hist_vol, bin_edges = np.histogram(df['Close'], bins=price_bins, weights=df['Volume'])
+# --- 繪圖邏輯 ---
+def create_chart_debug(df, symbol):
+    st.write("🎨 開始繪圖計算...")
     
-    # 找出最大量價位 (POC)
-    max_idx = np.argmax(hist_vol)
-    poc_price = (bin_edges[max_idx] + bin_edges[max_idx+1]) / 2
+    # 指標計算
+    try:
+        # 確保是 Series 運算
+        close = df['Close']
+        df['MA20'] = close.rolling(20).mean()
+        df['STD20'] = close.rolling(20).std()
+        df['BB_Up'] = df['MA20'] + 2 * df['STD20']
+        df['BB_Lo'] = df['MA20'] - 2 * df['STD20']
+        
+        # 籌碼計算
+        price_bins = np.linspace(df['Low'].min(), df['High'].max(), 80)
+        hist, edges = np.histogram(df['Close'], bins=price_bins, weights=df['Volume'])
+        max_idx = np.argmax(hist)
+        poc = (edges[max_idx] + edges[max_idx+1]) / 2
+        st.write(f"🔢 POC 計算完成: {poc:.2f}")
+    except Exception as e:
+        st.error(f"❌ 指標計算錯誤: {e}")
+        return None
 
-    # --- 設定 mplfinance 風格 ---
+    # 設定風格
     mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
-    s  = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc, gridstyle=':')
-
-    # 附加圖層：布林通道
+    s = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc)
+    
     apds = [
-        mpf.make_addplot(df['BB_Up'], color='grey', linestyle='--', width=0.8),
-        mpf.make_addplot(df['BB_Lo'], color='grey', linestyle='--', width=0.8)
+        mpf.make_addplot(df['BB_Up'], color='grey', linestyle='--'),
+        mpf.make_addplot(df['BB_Lo'], color='grey', linestyle='--')
     ]
 
-    # --- 【關鍵修改】開始繪圖 ---
-    # 注意：這裡將 tight_layout 設為 False，避免與後面的 savefig 衝突
-    fig, axes = mpf.plot(
-        df,
-        type='candle',
-        style=s,
-        title=f"\n{symbol} Volume Profile",
-        ylabel='Price',
-        volume=True,
-        mav=(5, 20, 60),
-        addplot=apds,
-        figsize=(14, 8),
-        panel_ratios=(2, 1),
-        returnfig=True, # 必須為 True 才能讓我們手動畫籌碼圖
-        tight_layout=False 
-    )
-
-    # --- 手動繪製橫向籌碼圖 ---
-    ax_main = axes[0] # 主圖 (K線圖)
-    ax_vp = ax_main.twiny() # 建立雙軸 (共用 Y 軸，獨立 X 軸)
-
-    # 畫出藍色橫條
-    ax_vp.barh(
-        y=bin_edges[:-1],
-        width=hist_vol,
-        height=np.diff(bin_edges),
-        align='edge',
-        color='skyblue',
-        alpha=0.3,
-        zorder=0 # 放在 K 線後面
-    )
+    st.write("🖌️ 正在呼叫 mplfinance plot...")
     
-    # 畫出 POC 橘色線
-    ax_main.axhline(poc_price, color='orange', linewidth=2.5)
-    
-    # 調整籌碼圖範圍 (避免蓋住 K 線)
-    ax_vp.set_xlim(0, max(hist_vol) * 4) # 設定為最大量的4倍，讓柱子只佔畫面 1/4
-    ax_vp.axis('off') # 隱藏上方刻度
+    # 建立圖表 (關鍵：關閉 tight_layout)
+    try:
+        fig, axes = mpf.plot(
+            df,
+            type='candle',
+            style=s,
+            volume=True,
+            addplot=apds,
+            mav=(5, 20),
+            figsize=(12, 8), # 縮小一點確保安全
+            returnfig=True,
+            tight_layout=False 
+        )
+    except Exception as e:
+        st.error(f"❌ mpf.plot 失敗: {e}")
+        return None
 
-    # 標示價格文字
-    ax_main.text(
-        df.index[-1], poc_price, f' POC: {poc_price:.2f}', 
-        color='orange', fontweight='bold', va='bottom'
-    )
+    # 疊加籌碼圖
+    try:
+        ax_main = axes[0]
+        ax_vp = ax_main.twiny()
+        
+        ax_vp.barh(
+            y=edges[:-1],
+            width=hist,
+            height=np.diff(edges),
+            align='edge',
+            color='skyblue',
+            alpha=0.3
+        )
+        
+        # 畫 POC
+        ax_main.axhline(poc, color='orange', linewidth=2)
+        
+        # 設定範圍
+        ax_vp.set_xlim(0, max(hist) * 4)
+        ax_vp.axis('off')
+        
+    except Exception as e:
+        st.error(f"❌ 疊圖失敗: {e}")
+        # 就算疊圖失敗，我們也試著回傳 fig，至少看得到 K 線
+        pass 
 
-    return fig, poc_price
+    return fig
 
-# --- 3. 主程式執行邏輯 ---
+# --- 主執行區 ---
 if ticker:
-    st.write(f"正在分析: **{ticker}** ...")
-    
-    df = get_data(ticker, period)
+    df = get_data_debug(ticker, period)
     
     if df is not None:
-        # 顯示最新價格
-        last_price = df['Close'].iloc[-1]
-        col1, col2 = st.columns(2)
-        col1.metric("最新收盤價", f"{last_price:.2f}")
+        fig = create_chart_debug(df, ticker)
         
-        try:
-            # 產生圖表物件
-            fig, poc = create_plot(df, ticker)
-            col2.metric("最大籌碼堆積 (POC)", f"{poc:.2f}")
-
-            # --- 【最後一哩路】將圖表轉為圖片顯示 ---
-            buf = io.BytesIO()
-            # 這裡使用 bbox_inches='tight' 來裁切多餘白邊，確保內容完整
-            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight') 
-            buf.seek(0)
-            
-            # 顯示圖片
-            st.image(buf, use_container_width=True)
-            
-            # 清理記憶體
-            plt.close(fig)
-            buf.close()
-            
-        except Exception as e:
-            st.error(f"繪圖發生錯誤: {e}")
-            st.write("建議：嘗試縮短查詢區間，或更換股票代號。")
-    else:
-        st.error(f"找不到 {ticker} 的資料。")
-        st.warning("常見原因：\n1. 股票代號錯誤 (台股請加 .TW)\n2. 該股票近期無交易\n3. Yahoo Finance 暫時連線不穩")
+        if fig:
+            st.write("💾 正在轉換圖片 (Buffer)...")
+            try:
+                buf = io.BytesIO()
+                # 【絕對關鍵】移除 bbox_inches='tight'，這是最可能導致圖片空白的原因
+                fig.savefig(buf, format='png', dpi=100) 
+                buf.seek(0)
+                
+                st.write("🖼️ 準備顯示圖片...")
+                st.image(buf, use_container_width=True)
+                st.success("✨ 圖片顯示程序完成")
+                
+                # 清理
+                plt.close(fig)
+                buf.close()
+            except Exception as e:
+                st.error(f"❌ 圖片儲存/顯示失敗: {e}")
