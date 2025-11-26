@@ -1,5 +1,5 @@
 import matplotlib
-# 【關鍵修正 1】強制使用非互動式後端，防止在雲端環境崩潰
+# 1. 強制使用非互動式後端 (防止 Server 崩潰)
 matplotlib.use('Agg') 
 
 import streamlit as st
@@ -8,6 +8,11 @@ import mplfinance as mpf
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import io # 新增：用於記憶體緩衝
+from PIL import Image # 新增：用於解除圖片限制
+
+# 2. 解除 PIL 的圖片大小限制 (防止 DecompressionBombError)
+Image.MAX_IMAGE_PIXELS = None 
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="股票籌碼分析儀", layout="wide")
@@ -25,7 +30,7 @@ with st.sidebar:
 @st.cache_data(ttl=3600)
 def load_data(symbol, time_period):
     try:
-        # 【關鍵修正 2】加入 auto_adjust=False 防止格式警告，並明確指定多執行緒
+        # 加入 auto_adjust=False 防止格式警告
         df = yf.download(symbol, period=time_period, auto_adjust=False, multi_level_index=False)
         
         # 二次防護：如果還是多層索引，手動處理
@@ -43,7 +48,6 @@ def load_data(symbol, time_period):
 # --- 函數：繪圖邏輯 ---
 def plot_chart(df, symbol):
     # 1. 計算布林通道
-    # 確保資料是數值型態，避免運算錯誤
     close_price = df['Close'].astype(float)
     df['MA20'] = close_price.rolling(window=20).mean()
     df['STD20'] = close_price.rolling(window=20).std()
@@ -51,7 +55,6 @@ def plot_chart(df, symbol):
     df['BB_Lower'] = df['MA20'] - (2 * df['STD20'])
 
     # 2. 計算分價量 (Volume Profile)
-    # 使用 try-except 避免 numpy 計算時發生空值錯誤
     try:
         price_bins = np.linspace(df['Low'].min(), df['High'].max(), num=100)
         hist_vol, bin_edges = np.histogram(
@@ -75,7 +78,7 @@ def plot_chart(df, symbol):
     ]
 
     # 4. 繪製主圖
-    # 【關鍵修正 3】稍微縮小尺寸 (18,10 -> 14,8) 避免記憶體溢出 (OOM)
+    # 注意：這裡的 figsize 設定適中即可
     fig, axes = mpf.plot(
         df,
         type='candle',
@@ -140,11 +143,22 @@ if ticker:
         fig, poc = plot_chart(df, ticker)
         
         if fig:
-            st.pyplot(fig)
+            # ========================================================
+            # 【核心修正】不使用 st.pyplot(fig) 
+            # 改用 BytesIO + 指定 DPI，徹底解決 DecompressionBombError
+            # ========================================================
+            buf = io.BytesIO()
+            # dpi=100 確保圖片大小適中，不會超過 PIL 限制
+            fig.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            
+            st.image(buf, use_container_width=True) # 顯示圖片
+            
             col2.metric("最大籌碼堆積 (POC)", f"{poc:.2f}")
             
-            # 【關鍵修正 4】畫完圖後手動釋放記憶體
+            # 釋放記憶體
             plt.close(fig) 
+            buf.close()
         else:
             st.error("繪圖失敗，請檢查數據源。")
         
