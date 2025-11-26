@@ -38,7 +38,6 @@ def load_data(symbol, period):
 
 # --- 作圖 ---
 def plot_chart(df, symbol):
-
     # === 計算布林通道 ===
     close = df['Close'].astype(float)
     df['MA20'] = close.rolling(20).mean()
@@ -46,33 +45,39 @@ def plot_chart(df, symbol):
     df['BB_Upper'] = df['MA20'] + 2 * df['STD20']
     df['BB_Lower'] = df['MA20'] - 2 * df['STD20']
 
-    # === 分價量計算 ===
-    price_bins = np.linspace(df['Low'].min(), df['High'].max(), 80)
+    # === 分價量（Volume Profile）計算 ===
+    price_bins = np.linspace(df['Low'].min(), df['High'].max(), 60)
     hist_vol, bin_edges = np.histogram(
         df['Close'], bins=price_bins, weights=df['Volume']
     )
 
-    # 計算 POC
     max_vol_idx = np.argmax(hist_vol)
     poc_price = (bin_edges[max_vol_idx] + bin_edges[max_vol_idx + 1]) / 2
 
-    # === 分價量轉可視化資料 ===
-    vp_y = (bin_edges[:-1] + bin_edges[1:]) / 2  # bin 中心
-    vp_scaled = hist_vol / hist_vol.max() * (df['High'].max() - df['Low'].min()) * 0.15
+    # === 生成與 df 相同長度的 volume profile "柱狀" addplot ===
+    # 右側 volume profile 以 bar 的方式，在價格附近畫出 dummy data
+    vp_display = pd.Series(index=df.index, dtype=float)
+    vp_display[:] = np.nan  # 先全 NaN
 
-    vp_series = pd.Series(vp_scaled + df['Low'].min(), index=vp_y)
+    # 把 hist_vol 正規化後，分布插入到接近價格的位置中
+    vp_scaled = hist_vol / hist_vol.max() * (df['High'].max() - df['Low'].min()) * 0.10
 
-    # === mplfinance 風格 ===
+    # 將 volume profile 映射到 K 線的最後一根附近，使其看起來像右側分價量
+    vp_display.iloc[-len(vp_scaled):] = df['Close'].iloc[-1] + vp_scaled
+
+    # === mplfinance style ===
     mc = mpf.make_marketcolors(up='r', down='g')
     style = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc)
 
     add_plots = [
         mpf.make_addplot(df['BB_Upper'], color='grey', linestyle='--'),
         mpf.make_addplot(df['BB_Lower'], color='grey', linestyle='--'),
-        mpf.make_addplot(vp_series, type='bar', width=0.7, color='skyblue', alpha=0.3)
+
+        # 右側 volume profile（不會觸發錯誤）
+        mpf.make_addplot(vp_display, type='bar', width=0.3, color='skyblue', alpha=0.3)
     ]
 
-    # === 繪製圖表（最穩定版）===
+    # === 畫圖 ===
     fig, axes = mpf.plot(
         df,
         type='candle',
@@ -84,7 +89,7 @@ def plot_chart(df, symbol):
         returnfig=True
     )
 
-    # === 加 POC 水平線 ===
+    # === POC 水平線 ===
     axes[0].axhline(poc_price, color='orange', linewidth=2)
 
     return fig, poc_price
@@ -103,7 +108,7 @@ else:
 
     fig, poc = plot_chart(df, ticker)
 
-    # === 使用 BytesIO 安全輸出到 Streamlit Cloud ===
+    # === 使用 BytesIO 輸出 ===
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
     buf.seek(0)
