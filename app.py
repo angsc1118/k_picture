@@ -14,7 +14,7 @@ st.markdown("輸入台股代號 (如 `8155.TW`)，查看 K 線、布林通道與
 # --- 側邊欄輸入 ---
 with st.sidebar:
     st.header("參數設定")
-    ticker = st.text_input("股票代號", value="8155.TW").upper()
+    ticker = st.text_input("股票代號", value="3167.TW").upper()
     period = st.selectbox("資料區間", options=["3mo", "6mo", "1y", "2y"], index=1)
     st.info("💡 橘色橫線 = 最大成交量價位 (POC)\n\n藍色長條 = 分價量表")
 
