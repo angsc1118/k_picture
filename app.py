@@ -21,43 +21,40 @@ Image.MAX_IMAGE_PIXELS = None
 
 # --- 頁面設定 ---
 st.set_page_config(page_title="專業籌碼分析 Pro", layout="wide")
-st.title("📊 專業股票技術分析 + 精確籌碼分布 (Pro Stable)")
+st.title("📊 專業股票技術分析 + 精確籌碼分布 (Visual Optimized)")
 st.markdown("""
 <style>
     .stApp { background-color: #f0f2f6; }
 </style>
-此版本已修復 **字體註冊問題** 與 **記憶體崩潰風險**，保持視覺優化效果。
+此版本已 **移除外部均線數值**，並調整圖片為 **直式長方形**，拉開成交量與 K 線的間距。
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 0. 中文字體處理 (修復版：強制註冊)
+# 0. 中文字體處理 (強制註冊版)
 # ==========================================
 @st.cache_resource
 def get_chinese_font():
     font_path = "NotoSansTC-Regular.otf"
-    # 如果檔案不存在，嘗試下載
     if not os.path.exists(font_path):
         url = "https://github.com/adobe-fonts/source-han-sans/raw/release/OTF/TraditionalChinese/SourceHanSansTC-Regular.otf"
         try:
-            r = requests.get(url, timeout=10) # 增加 timeout
+            r = requests.get(url, timeout=10)
             with open(font_path, 'wb') as f:
                 f.write(r.content)
         except Exception as e:
-            st.warning(f"字體下載失敗: {e}，將使用系統預設字體。")
+            st.warning(f"字體下載失敗: {e}")
     
-    # 關鍵修復：向 Matplotlib 全域管理器註冊字體
     if os.path.exists(font_path):
         fm.fontManager.addfont(font_path)
         return fm.FontProperties(fname=font_path)
     else:
-        return fm.FontProperties() # 回傳預設
+        return fm.FontProperties()
 
 prop = get_chinese_font()
-# 取得註冊後的字體名稱 (用於 rcParams)
 font_name = prop.get_name() 
 
 # ==========================================
-# 1. 核心演算法：精確籌碼計算 (Method B + C)
+# 1. 核心演算法：精確籌碼計算
 # ==========================================
 
 def get_tw_tick(price):
@@ -71,7 +68,7 @@ def get_tw_tick(price):
 def generate_tick_bins(low_price, high_price):
     current = low_price
     bins = [current]
-    max_steps = 15000 # 稍微調高上限以防萬一
+    max_steps = 15000 
     steps = 0
     while current < high_price and steps < max_steps:
         tick = get_tw_tick(current)
@@ -110,7 +107,7 @@ def calculate_precise_volume_profile(df):
     return vol_hist, edges
 
 # ==========================================
-# 2. 繪圖與數據處理 (穩定版)
+# 2. 繪圖與數據處理 (視覺間距與比例優化)
 # ==========================================
 
 def smart_download(input_ticker, p, status_container):
@@ -149,12 +146,13 @@ def create_chart_precise(df, symbol):
     poc = (edges[max_idx] + edges[max_idx+1]) / 2
 
     # --- 視覺風格定義 ---
+    # 優化：成交量顏色與 K 線統一，且去除邊框以求乾淨
     mc = mpf.make_marketcolors(
         up='#D32F2F', down='#00796B', 
-        edge='inherit', wick='inherit', volume='inherit'
+        edge='inherit', wick='inherit', 
+        volume={'up': '#D32F2F', 'down': '#00796B'} # 強制指定成交量顏色
     )
     
-    # 修復：使用已註冊的 font_name，而非 prop 物件
     s = mpf.make_mpf_style(
         base_mpf_style='yahoo', 
         marketcolors=mc, 
@@ -167,7 +165,7 @@ def create_chart_precise(df, symbol):
             'font.family': font_name, 
             'axes.unicode_minus': False,
             'axes.labelsize': 12,
-            'axes.titlesize': 16
+            'axes.titlesize': 18
         }
     )
     
@@ -178,28 +176,33 @@ def create_chart_precise(df, symbol):
         mpf.make_addplot(df['BB_Lo'], color='slategrey', linestyle='--', width=0.8, alpha=0.5)
     ]
 
-    # 繪圖
+    # --- 關鍵修改：圖片比例與間距 ---
     fig, axes = mpf.plot(
         df, type='candle', style=s, volume=True, addplot=apds,
         mav=(5, 20, 60), mavcolors=mav_colors,
-        figsize=(16, 9), 
-        panel_ratios=(3, 1), 
+        figsize=(12, 16),      # <--- 修改點：改為寬12 高16 (直式長方形)
+        panel_ratios=(2.5, 1), # <--- 修改點：調整主圖與副圖高度比
         returnfig=True, 
-        tight_layout=True, # 使用內建 tight_layout，不依賴 savefig 的 bbox_inches
-        scale_padding={'left': 0.1, 'top': 0.5, 'right': 1.2, 'bottom': 0.5} 
+        tight_layout=False,    # <--- 修改點：關閉 tight_layout 以便手動控制間距
+        scale_padding={'left': 0.1, 'top': 1, 'right': 1.2, 'bottom': 1}
     )
+    
+    # --- 強制拉開間距 ---
+    fig.subplots_adjust(hspace=0.3) # <--- 修改點：數值越大，上下圖間距越寬
     
     ax_main = axes[0]
     ax_vol = axes[2]
     
-    ax_main.set_title(f"{symbol} 專業技術分析 (Stable)", fontproperties=prop, fontsize=20, weight='bold', pad=15)
+    # 標題設定
+    ax_main.set_title(f"{symbol} 專業技術分析", fontproperties=prop, fontsize=22, weight='bold', pad=20)
     ax_main.set_ylabel("價格", fontproperties=prop, fontsize=12)
     ax_vol.set_ylabel("成交量", fontproperties=prop, fontsize=12)
 
+    # 格式化 Y 軸
     ax_main.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.2f}'))
     ax_vol.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
 
-    # VP (Volume Profile)
+    # --- VP (Volume Profile) ---
     ax_vp = ax_main.twiny()
     max_hist = max(hist)
     ax_vp.set_xlim(0, max_hist * 3.0) 
@@ -210,7 +213,7 @@ def create_chart_precise(df, symbol):
     )
     ax_vp.axis('off')
 
-    # POC
+    # --- POC ---
     ax_main.axhline(poc, color='white', linewidth=3.5, alpha=0.8, zorder=9)
     ax_main.axhline(poc, color='#FF6D00', linewidth=2.0, alpha=1.0, zorder=10)
     
@@ -221,7 +224,7 @@ def create_chart_precise(df, symbol):
         bbox=dict(facecolor='#FF6D00', edgecolor='white', boxstyle='round,pad=0.3')
     )
 
-    # Legend
+    # --- Legend (保持圖表內) ---
     legend_elements = [
         Line2D([0], [0], color=mav_colors[0], lw=2, label=f'MA5: {last_ma5:.2f}'),
         Line2D([0], [0], color=mav_colors[1], lw=2, label=f'MA20: {last_ma20:.2f}'),
@@ -229,27 +232,27 @@ def create_chart_precise(df, symbol):
     ]
     ax_main.legend(
         handles=legend_elements, loc='upper left', 
-        fontsize=10, framealpha=0.9, edgecolor='#CCCCCC'
+        fontsize=11, framealpha=0.9, edgecolor='#CCCCCC'
     )
 
-    return fig, poc, df['Close'].iloc[-1], (last_ma5, last_ma20, last_ma60)
+    return fig, poc, df['Close'].iloc[-1]
 
 # ==========================================
-# 3. 側邊欄與執行 (增加資源保護)
+# 3. 側邊欄與執行 (移除外部數值顯示)
 # ==========================================
 with st.sidebar:
     st.header("參數設定")
     user_input = st.text_input("股票代號", value="2330").strip()
     period = st.selectbox("資料區間", ["3mo", "6mo", "1y"], index=1)
-    st.info("💡 系統狀態：已啟用記憶體保護模式")
+    st.info("💡 視覺更新：\n1. 直式長圖 (適合閱讀)\n2. 均線數值整合於圖表\n3. 成交量區間加寬")
     st.divider()
     run_button = st.button("🚀 開始分析", type="primary")
 
 if run_button:
     status_box = st.empty()
     status_box.text("🚀 初始化...")
-    fig = None # 初始化 fig 變數
-    buf = None # 初始化 buf 變數
+    fig = None 
+    buf = None 
     
     if not user_input:
         status_box.error("請輸入代號")
@@ -263,33 +266,25 @@ if run_button:
             status_box.text(f"🧮 正在運算精確籌碼...")
             
             try:
-                fig, poc_price, last_price, mas = create_chart_precise(df, valid_symbol)
+                # 不再接收 mas (均線數值)，因為外部不顯示了
+                fig, poc_price, last_price = create_chart_precise(df, valid_symbol)
                 
                 status_box.text("✅ 運算完成，渲染中...")
                 
-                c1, c2, c3 = st.columns([1, 12, 1])
+                # 調整版面：中間欄位設為主要顯示區
+                c1, c2, c3 = st.columns([1, 8, 1]) 
                 with c2:
+                    # 僅保留基本行情
                     m1, m2 = st.columns(2)
                     m1.metric("最新收盤", f"{last_price:.2f}")
                     m2.metric("精確 POC 價位", f"{poc_price:.2f}")
                     
                     st.markdown("---")
-                    col_ma5, col_ma20, col_ma60 = st.columns(3)
-                    
-                    col_ma5.markdown(f"<span style='color:#1f77b4; font-weight:bold'>🔵 MA5 (週線)</span>", unsafe_allow_html=True)
-                    col_ma5.metric("價格", f"{mas[0]:.2f}", label_visibility="collapsed")
-                    
-                    col_ma20.markdown(f"<span style='color:#ff7f0e; font-weight:bold'>🟠 MA20 (月線)</span>", unsafe_allow_html=True)
-                    col_ma20.metric("價格", f"{mas[1]:.2f}", label_visibility="collapsed")
-                    
-                    col_ma60.markdown(f"<span style='color:#9467bd; font-weight:bold'>🟣 MA60 (季線)</span>", unsafe_allow_html=True)
-                    col_ma60.metric("價格", f"{mas[2]:.2f}", label_visibility="collapsed")
-                    
-                    st.markdown("---")
+                    # ⚠️ 已移除 MA5/MA20/MA60 的外部顯示程式碼
 
                     buf = io.BytesIO()
-                    # 修正：降低 DPI 至 120，移除 bbox_inches='tight' 以節省記憶體
-                    fig.savefig(buf, format='png', dpi=120) 
+                    # 存檔時 dpi=120 保持清晰度與效能平衡
+                    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight') 
                     buf.seek(0)
                     st.image(buf, use_container_width=True)
                 
@@ -300,9 +295,8 @@ if run_button:
                 st.error(f"Error details: {e}")
             
             finally:
-                # 確保資源釋放，防止記憶體洩漏
                 if fig is not None:
                     plt.close(fig)
-                    plt.close('all') # 強制關閉所有
+                    plt.close('all')
                 if buf is not None:
                     buf.close()
