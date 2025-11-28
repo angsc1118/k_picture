@@ -9,7 +9,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-from matplotlib.lines import Line2D # 用來畫自訂圖例
+import matplotlib.ticker as ticker  # 新增：用於數值格式化
+from matplotlib.lines import Line2D 
 import io
 import os
 import requests
@@ -19,14 +20,17 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="專業籌碼分析 (含均線數值)", layout="wide")
-st.title("📊 專業股票技術分析 + 精確籌碼分布 (Volume Profile)")
+st.set_page_config(page_title="專業籌碼分析 Pro", layout="wide")
+st.title("📊 專業股票技術分析 + 精確籌碼分布 (Pro Version)")
 st.markdown("""
-此版本包含 **Tick-by-Tick 精確級距**、**K棒均勻分佈演算法**，並新增 **即時均線報價** 功能。
-""")
+<style>
+    .stApp { background-color: #f0f2f6; }
+</style>
+此版本包含 **視覺優化 (Visual Upgrade)**、**Tick-by-Tick 精確級距**、**K棒均勻分佈演算法**。
+""", unsafe_allow_html=True)
 
 # ==========================================
-# 0. 中文字體處理
+# 0. 中文字體處理 (維持不變)
 # ==========================================
 @st.cache_resource
 def get_chinese_font():
@@ -44,10 +48,9 @@ def get_chinese_font():
 prop = get_chinese_font()
 
 # ==========================================
-# 1. 核心演算法：精確籌碼計算 (Method B + C)
+# 1. 核心演算法：精確籌碼計算 (Method B + C) - (維持不變)
 # ==========================================
 
-# (Method B) 定義台股價格跳動單位
 def get_tw_tick(price):
     if price < 10: return 0.01
     elif price < 50: return 0.05
@@ -56,7 +59,6 @@ def get_tw_tick(price):
     elif price < 1000: return 1.0
     else: return 5.0
 
-# (Method B) 產生符合交易所規則的價格網格
 def generate_tick_bins(low_price, high_price):
     current = low_price
     bins = [current]
@@ -69,7 +71,6 @@ def generate_tick_bins(low_price, high_price):
         steps += 1
     return np.array(bins)
 
-# (Method C) 均勻分佈成交量演算法
 def calculate_precise_volume_profile(df):
     min_p = df['Low'].min()
     max_p = df['High'].max()
@@ -100,7 +101,7 @@ def calculate_precise_volume_profile(df):
     return vol_hist, edges
 
 # ==========================================
-# 2. 繪圖與數據處理
+# 2. 繪圖與數據處理 (大幅重構與美化)
 # ==========================================
 
 def smart_download(input_ticker, p, status_container):
@@ -119,7 +120,6 @@ def smart_download(input_ticker, p, status_container):
         except: continue
     return None, None
 
-# 繪圖主函數 (更新版)
 def create_chart_precise(df, symbol):
     # 指標計算
     close = df['Close']
@@ -130,7 +130,6 @@ def create_chart_precise(df, symbol):
     df['BB_Up'] = df['MA20'] + 2 * df['STD20']
     df['BB_Lo'] = df['MA20'] - 2 * df['STD20']
     
-    # 取得最新一天的均線數值 (用於圖例顯示)
     last_ma5 = df['MA5'].iloc[-1]
     last_ma20 = df['MA20'].iloc[-1]
     last_ma60 = df['MA60'].iloc[-1]
@@ -140,72 +139,113 @@ def create_chart_precise(df, symbol):
     max_idx = np.argmax(hist)
     poc = (edges[max_idx] + edges[max_idx+1]) / 2
 
-    # 風格設定
-    mc = mpf.make_marketcolors(up='#FF3333', down='#00B060', edge='inherit', wick='inherit', volume='inherit')
-    s = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc, gridstyle=':', gridcolor='#D0D0D0', y_on_right=True)
+    # --- 視覺風格定義 (Visual Upgrade) ---
+    # 1. 專業配色：使用更深沈的紅綠，避免刺眼
+    mc = mpf.make_marketcolors(
+        up='#D32F2F', down='#00796B', 
+        edge='inherit', wick='inherit', volume='inherit'
+    )
     
-    # 定義均線顏色：MA5(藍), MA20(橘), MA60(紫)
-    mav_colors = ['#1f77b4', '#ff7f0e', '#9467bd']
+    # 2. 背景與網格：Off-white 背景，極淡網格
+    s = mpf.make_mpf_style(
+        base_mpf_style='yahoo', 
+        marketcolors=mc, 
+        gridstyle=':', 
+        gridcolor='#E0E0E0', 
+        facecolor='#FAFAFA', # 繪圖區背景
+        figcolor='#FFFFFF',  # 圖片邊框背景
+        y_on_right=True,
+        rc={
+            'font.family': prop.get_name(), 
+            'axes.unicode_minus': False,
+            'axes.labelsize': 12,
+            'axes.titlesize': 16
+        }
+    )
+    
+    mav_colors = ['#1f77b4', '#ff7f0e', '#9467bd'] # 藍、橘、紫
     
     apds = [
-        mpf.make_addplot(df['BB_Up'], color='grey', linestyle='--', width=1, alpha=0.6),
-        mpf.make_addplot(df['BB_Lo'], color='grey', linestyle='--', width=1, alpha=0.6)
+        mpf.make_addplot(df['BB_Up'], color='slategrey', linestyle='--', width=0.8, alpha=0.5),
+        mpf.make_addplot(df['BB_Lo'], color='slategrey', linestyle='--', width=0.8, alpha=0.5)
     ]
 
-    # 繪圖
+    # 3. 繪圖參數：調整版面比例為 3:1 (Panel Ratio)
     fig, axes = mpf.plot(
         df, type='candle', style=s, volume=True, addplot=apds,
         mav=(5, 20, 60), mavcolors=mav_colors,
-        figsize=(16, 10), panel_ratios=(2, 1),
-        returnfig=True, tight_layout=False
+        figsize=(16, 9), # 16:9 寬螢幕比例
+        panel_ratios=(3, 1), # 價格區佔 3 份，成交量佔 1 份
+        returnfig=True, 
+        tight_layout=True,
+        scale_padding={'left': 0.1, 'top': 0.5, 'right': 1.2, 'bottom': 0.5} # 增加右側留白給 Y 軸
     )
     
-    fig.subplots_adjust(hspace=0.4) 
-
     ax_main = axes[0]
     ax_vol = axes[2]
-    ax_main.set_title(f"{symbol} 精確籌碼與均線分析", fontproperties=prop, fontsize=22, pad=20)
+    
+    # 標題設定
+    ax_main.set_title(f"{symbol} 專業技術分析 (Tick-Pro)", fontproperties=prop, fontsize=20, weight='bold', pad=15)
     ax_main.set_ylabel("價格", fontproperties=prop, fontsize=12)
     ax_vol.set_ylabel("成交量", fontproperties=prop, fontsize=12)
 
-    # --- 自訂圖例 (Legend) ---
-    # 這裡手動建立圖例，顯示顏色與當日數值
-    legend_elements = [
-        Line2D([0], [0], color=mav_colors[0], lw=2, label=f'MA5 (藍): {last_ma5:.2f}'),
-        Line2D([0], [0], color=mav_colors[1], lw=2, label=f'MA20 (橘): {last_ma20:.2f}'),
-        Line2D([0], [0], color=mav_colors[2], lw=2, label=f'MA60 (紫): {last_ma60:.2f}')
-    ]
-    # 將圖例放在左上角
-    ax_main.legend(handles=legend_elements, loc='upper left', fontsize=10, framealpha=0.8)
+    # --- Y 軸格式化 (千分位逗號) ---
+    ax_main.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.2f}'))
+    ax_vol.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
 
-    # --- 疊加 POC ---
+    # --- 籌碼分布圖 (VP) 優化 ---
+    # 使用 Twiny 軸繪製，但放在背景
     ax_vp = ax_main.twiny()
+    
+    # 計算 X 軸限制：強制讓最長籌碼條只佔畫面的 30% ~ 35%
+    max_hist = max(hist)
+    ax_vp.set_xlim(0, max_hist * 3.0) 
+    
+    # 繪製籌碼：改用冷灰色 (SlateGray) 且透明度極低 (Alpha 0.15)
+    # Zorder=0 確保它在 K 線後面
     ax_vp.barh(
         y=edges[:-1], width=hist, height=np.diff(edges)*0.9,
-        align='edge', color='skyblue', alpha=0.3, edgecolor='#87CEEB', linewidth=0.5, zorder=0
+        align='edge', color='#708090', alpha=0.15, edgecolor=None, zorder=0
     )
+    ax_vp.axis('off') # 隱藏上方座標軸
+
+    # --- POC 優化 (高對比) ---
+    # 1. 白色描邊 (Outline) 增加立體感
+    ax_main.axhline(poc, color='white', linewidth=3.5, alpha=0.8, zorder=9)
+    # 2. 安全橘核心線 (Safety Orange)
+    ax_main.axhline(poc, color='#FF6D00', linewidth=2.0, alpha=1.0, zorder=10)
     
-    ax_main.axhline(poc, color='#FFFF00', linewidth=3.0, alpha=1.0, zorder=10)
+    # POC 標籤
     ax_main.text(
         df.index[-1], poc, f' POC: {poc:.2f} ',
-        color='black', fontweight='bold', backgroundcolor='#FFFF00',
-        verticalalignment='center', zorder=11
+        color='white', fontweight='bold', backgroundcolor='#FF6D00',
+        fontsize=10, verticalalignment='center', zorder=11,
+        bbox=dict(facecolor='#FF6D00', edgecolor='white', boxstyle='round,pad=0.3')
     )
-    
-    ax_vp.set_xlim(0, max(hist) * 3.5)
-    ax_vp.axis('off')
-    
+
+    # --- 圖例優化 (Custom Legend) ---
+    legend_elements = [
+        Line2D([0], [0], color=mav_colors[0], lw=2, label=f'MA5: {last_ma5:.2f}'),
+        Line2D([0], [0], color=mav_colors[1], lw=2, label=f'MA20: {last_ma20:.2f}'),
+        Line2D([0], [0], color=mav_colors[2], lw=2, label=f'MA60: {last_ma60:.2f}')
+    ]
+    # 將圖例放在左上角，並加上半透明背景
+    ax_main.legend(
+        handles=legend_elements, loc='upper left', 
+        fontsize=10, framealpha=0.9, edgecolor='#CCCCCC'
+    )
+
     # 回傳數值給主程式顯示
     return fig, poc, df['Close'].iloc[-1], (last_ma5, last_ma20, last_ma60)
 
 # ==========================================
-# 3. 側邊欄與執行
+# 3. 側邊欄與執行 (維持不變)
 # ==========================================
 with st.sidebar:
     st.header("參數設定")
     user_input = st.text_input("股票代號", value="2330").strip()
     period = st.selectbox("資料區間", ["3mo", "6mo", "1y"], index=1)
-    st.info("💡 圖表左上角已新增均線價格說明")
+    st.info("💡 視覺優化版：\n1. 籌碼條不遮擋 K 線\n2. POC 高對比顯示\n3. 3:1 價格優先版面")
     st.divider()
     run_button = st.button("🚀 開始分析", type="primary")
 
@@ -222,7 +262,7 @@ if run_button:
             status_box.empty()
             st.error(f"❌ 查無資料: {user_input}")
         else:
-            status_box.text(f"🧮 正在運算籌碼與均線...")
+            status_box.text(f"🧮 正在運算精確籌碼...")
             
             try:
                 # 接收回傳的均線數值 (mas)
@@ -230,19 +270,17 @@ if run_button:
                 
                 status_box.text("✅ 運算完成，渲染中...")
                 
-                c1, c2, c3 = st.columns([1, 10, 1])
+                c1, c2, c3 = st.columns([1, 12, 1]) # 調整中間欄位寬度
                 with c2:
                     # 第一排：基本行情
                     m1, m2 = st.columns(2)
                     m1.metric("最新收盤", f"{last_price:.2f}")
                     m2.metric("精確 POC 價位", f"{poc_price:.2f}")
                     
-                    # 第二排：均線數值 (新增功能)
-                    # 顏色對應：藍、橘、紫
+                    # 第二排：均線數值
                     st.markdown("---")
                     col_ma5, col_ma20, col_ma60 = st.columns(3)
                     
-                    # 使用 HTML 語法讓文字帶有顏色，與圖表呼應
                     col_ma5.markdown(f"<span style='color:#1f77b4; font-weight:bold'>🔵 MA5 (週線)</span>", unsafe_allow_html=True)
                     col_ma5.metric("價格", f"{mas[0]:.2f}", label_visibility="collapsed")
                     
@@ -256,7 +294,7 @@ if run_button:
 
                     # 顯示圖片
                     buf = io.BytesIO()
-                    fig.savefig(buf, format='png', dpi=120)
+                    fig.savefig(buf, format='png', dpi=150, bbox_inches='tight') # 提高 DPI 至 150
                     buf.seek(0)
                     st.image(buf, use_container_width=True)
                 
