@@ -26,7 +26,7 @@ st.markdown("""
 <style>
     .stApp { background-color: #f0f2f6; }
 </style>
-此版本已 **移除外部均線數值**，並調整圖片為 **直式長方形**，拉開成交量與 K 線的間距。
+此版本已修復 **Streamlit API 棄用警告** (use_container_width -> width)，確保在最新環境下執行順暢。
 """, unsafe_allow_html=True)
 
 # ==========================================
@@ -107,7 +107,7 @@ def calculate_precise_volume_profile(df):
     return vol_hist, edges
 
 # ==========================================
-# 2. 繪圖與數據處理 (視覺間距與比例優化)
+# 2. 繪圖與數據處理
 # ==========================================
 
 def smart_download(input_ticker, p, status_container):
@@ -146,11 +146,10 @@ def create_chart_precise(df, symbol):
     poc = (edges[max_idx] + edges[max_idx+1]) / 2
 
     # --- 視覺風格定義 ---
-    # 優化：成交量顏色與 K 線統一，且去除邊框以求乾淨
     mc = mpf.make_marketcolors(
         up='#D32F2F', down='#00796B', 
         edge='inherit', wick='inherit', 
-        volume={'up': '#D32F2F', 'down': '#00796B'} # 強制指定成交量顏色
+        volume={'up': '#D32F2F', 'down': '#00796B'}
     )
     
     s = mpf.make_mpf_style(
@@ -176,19 +175,19 @@ def create_chart_precise(df, symbol):
         mpf.make_addplot(df['BB_Lo'], color='slategrey', linestyle='--', width=0.8, alpha=0.5)
     ]
 
-    # --- 關鍵修改：圖片比例與間距 ---
+    # --- 繪圖設定 (直式長方形) ---
     fig, axes = mpf.plot(
         df, type='candle', style=s, volume=True, addplot=apds,
         mav=(5, 20, 60), mavcolors=mav_colors,
-        figsize=(12, 16),      # <--- 修改點：改為寬12 高16 (直式長方形)
-        panel_ratios=(2.5, 1), # <--- 修改點：調整主圖與副圖高度比
+        figsize=(12, 16),      # 寬12 高16
+        panel_ratios=(2.5, 1), 
         returnfig=True, 
-        tight_layout=False,    # <--- 修改點：關閉 tight_layout 以便手動控制間距
+        tight_layout=False,    
         scale_padding={'left': 0.1, 'top': 1, 'right': 1.2, 'bottom': 1}
     )
     
-    # --- 強制拉開間距 ---
-    fig.subplots_adjust(hspace=0.3) # <--- 修改點：數值越大，上下圖間距越寬
+    # 強制拉開間距
+    fig.subplots_adjust(hspace=0.3)
     
     ax_main = axes[0]
     ax_vol = axes[2]
@@ -198,11 +197,10 @@ def create_chart_precise(df, symbol):
     ax_main.set_ylabel("價格", fontproperties=prop, fontsize=12)
     ax_vol.set_ylabel("成交量", fontproperties=prop, fontsize=12)
 
-    # 格式化 Y 軸
     ax_main.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.2f}'))
     ax_vol.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
 
-    # --- VP (Volume Profile) ---
+    # VP (Volume Profile)
     ax_vp = ax_main.twiny()
     max_hist = max(hist)
     ax_vp.set_xlim(0, max_hist * 3.0) 
@@ -213,7 +211,7 @@ def create_chart_precise(df, symbol):
     )
     ax_vp.axis('off')
 
-    # --- POC ---
+    # POC
     ax_main.axhline(poc, color='white', linewidth=3.5, alpha=0.8, zorder=9)
     ax_main.axhline(poc, color='#FF6D00', linewidth=2.0, alpha=1.0, zorder=10)
     
@@ -224,7 +222,7 @@ def create_chart_precise(df, symbol):
         bbox=dict(facecolor='#FF6D00', edgecolor='white', boxstyle='round,pad=0.3')
     )
 
-    # --- Legend (保持圖表內) ---
+    # Legend
     legend_elements = [
         Line2D([0], [0], color=mav_colors[0], lw=2, label=f'MA5: {last_ma5:.2f}'),
         Line2D([0], [0], color=mav_colors[1], lw=2, label=f'MA20: {last_ma20:.2f}'),
@@ -238,13 +236,13 @@ def create_chart_precise(df, symbol):
     return fig, poc, df['Close'].iloc[-1]
 
 # ==========================================
-# 3. 側邊欄與執行 (移除外部數值顯示)
+# 3. 側邊欄與執行
 # ==========================================
 with st.sidebar:
     st.header("參數設定")
     user_input = st.text_input("股票代號", value="2330").strip()
     period = st.selectbox("資料區間", ["3mo", "6mo", "1y"], index=1)
-    st.info("💡 視覺更新：\n1. 直式長圖 (適合閱讀)\n2. 均線數值整合於圖表\n3. 成交量區間加寬")
+    st.info("💡 系統狀態：API 相容性修正 (V7.1)")
     st.divider()
     run_button = st.button("🚀 開始分析", type="primary")
 
@@ -266,32 +264,29 @@ if run_button:
             status_box.text(f"🧮 正在運算精確籌碼...")
             
             try:
-                # 不再接收 mas (均線數值)，因為外部不顯示了
                 fig, poc_price, last_price = create_chart_precise(df, valid_symbol)
                 
                 status_box.text("✅ 運算完成，渲染中...")
                 
-                # 調整版面：中間欄位設為主要顯示區
                 c1, c2, c3 = st.columns([1, 8, 1]) 
                 with c2:
-                    # 僅保留基本行情
                     m1, m2 = st.columns(2)
                     m1.metric("最新收盤", f"{last_price:.2f}")
                     m2.metric("精確 POC 價位", f"{poc_price:.2f}")
                     
                     st.markdown("---")
-                    # ⚠️ 已移除 MA5/MA20/MA60 的外部顯示程式碼
 
                     buf = io.BytesIO()
-                    # 存檔時 dpi=120 保持清晰度與效能平衡
                     fig.savefig(buf, format='png', dpi=120, bbox_inches='tight') 
                     buf.seek(0)
-                    st.image(buf, use_container_width=True)
+                    
+                    # ⚠️ 修正：依指示將 use_container_width=True 替換為 width="stretch"
+                    st.image(buf, width="stretch")
                 
                 status_box.success(f"✨ 分析完成: {valid_symbol}")
                 
             except Exception as e:
-                status_box.error("運算錯誤 (可能是記憶體不足或網路問題)")
+                status_box.error("運算錯誤")
                 st.error(f"Error details: {e}")
             
             finally:
