@@ -26,11 +26,10 @@ st.markdown("""
 <style>
     .stApp { background-color: #f0f2f6; }
 </style>
-此版本已修復 **Streamlit API 棄用警告** (use_container_width -> width)，確保在最新環境下執行順暢。
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 0. 中文字體處理 (強制註冊版)
+# 0. 中文字體處理 (維持 V6.3 的修復版)
 # ==========================================
 @st.cache_resource
 def get_chinese_font():
@@ -42,7 +41,7 @@ def get_chinese_font():
             with open(font_path, 'wb') as f:
                 f.write(r.content)
         except Exception as e:
-            st.warning(f"字體下載失敗: {e}")
+            st.warning(f"字體下載失敗: {e}，將使用系統預設字體。")
     
     if os.path.exists(font_path):
         fm.fontManager.addfont(font_path)
@@ -54,7 +53,7 @@ prop = get_chinese_font()
 font_name = prop.get_name() 
 
 # ==========================================
-# 1. 核心演算法：精確籌碼計算
+# 1. 核心演算法：精確籌碼計算 (Method B + C)
 # ==========================================
 
 def get_tw_tick(price):
@@ -107,7 +106,7 @@ def calculate_precise_volume_profile(df):
     return vol_hist, edges
 
 # ==========================================
-# 2. 繪圖與數據處理
+# 2. 繪圖與數據處理 (視覺優化 V6.4)
 # ==========================================
 
 def smart_download(input_ticker, p, status_container):
@@ -145,11 +144,14 @@ def create_chart_precise(df, symbol):
     max_idx = np.argmax(hist)
     poc = (edges[max_idx] + edges[max_idx+1]) / 2
 
-    # --- 視覺風格定義 ---
+    # --- 視覺風格定義 (重點修改處) ---
     mc = mpf.make_marketcolors(
-        up='#D32F2F', down='#00796B', 
-        edge='inherit', wick='inherit', 
-        volume={'up': '#D32F2F', 'down': '#00796B'}
+        up='#D32F2F',      # K線 - 深紅 (Deep Red)
+        down='#00796B',    # K線 - 深綠 (Teal Green)
+        edge='inherit', 
+        wick='inherit', 
+        # 成交量顏色優化：使用柔和的粉彩系，避免搶眼
+        volume={'up': '#ff9999', 'down': '#80cbc4'} 
     )
     
     s = mpf.make_mpf_style(
@@ -164,7 +166,7 @@ def create_chart_precise(df, symbol):
             'font.family': font_name, 
             'axes.unicode_minus': False,
             'axes.labelsize': 12,
-            'axes.titlesize': 18
+            'axes.titlesize': 16
         }
     )
     
@@ -175,32 +177,28 @@ def create_chart_precise(df, symbol):
         mpf.make_addplot(df['BB_Lo'], color='slategrey', linestyle='--', width=0.8, alpha=0.5)
     ]
 
-    # --- 繪圖設定 (直式長方形) ---
+    # 繪圖
     fig, axes = mpf.plot(
         df, type='candle', style=s, volume=True, addplot=apds,
         mav=(5, 20, 60), mavcolors=mav_colors,
-        figsize=(12, 16),      # 寬12 高16
-        panel_ratios=(2.5, 1), 
+        figsize=(16, 9), 
+        panel_ratios=(3, 1), 
         returnfig=True, 
-        tight_layout=False,    
-        scale_padding={'left': 0.1, 'top': 1, 'right': 1.2, 'bottom': 1}
+        tight_layout=True,
+        scale_padding={'left': 0.1, 'top': 0.5, 'right': 1.2, 'bottom': 0.5} 
     )
-    
-    # 強制拉開間距
-    fig.subplots_adjust(hspace=0.3)
     
     ax_main = axes[0]
     ax_vol = axes[2]
     
-    # 標題設定
-    ax_main.set_title(f"{symbol} 專業技術分析", fontproperties=prop, fontsize=22, weight='bold', pad=20)
+    ax_main.set_title(f"{symbol} 專業技術分析 (VP Optimized)", fontproperties=prop, fontsize=20, weight='bold', pad=15)
     ax_main.set_ylabel("價格", fontproperties=prop, fontsize=12)
     ax_vol.set_ylabel("成交量", fontproperties=prop, fontsize=12)
 
     ax_main.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.2f}'))
     ax_vol.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
 
-    # VP (Volume Profile)
+    # VP (Volume Profile) - 保持淺灰色與 K 線區隔
     ax_vp = ax_main.twiny()
     max_hist = max(hist)
     ax_vp.set_xlim(0, max_hist * 3.0) 
@@ -230,7 +228,7 @@ def create_chart_precise(df, symbol):
     ]
     ax_main.legend(
         handles=legend_elements, loc='upper left', 
-        fontsize=11, framealpha=0.9, edgecolor='#CCCCCC'
+        fontsize=10, framealpha=0.9, edgecolor='#CCCCCC'
     )
 
     return fig, poc, df['Close'].iloc[-1]
@@ -242,7 +240,7 @@ with st.sidebar:
     st.header("參數設定")
     user_input = st.text_input("股票代號", value="2330").strip()
     period = st.selectbox("資料區間", ["3mo", "6mo", "1y"], index=1)
-    st.info("💡 系統狀態：API 相容性修正 (V7.1)")
+    st.info("💡 優化項目：\n1. 成交量改為柔和配色\n2. 移除外部多餘文字")
     st.divider()
     run_button = st.button("🚀 開始分析", type="primary")
 
@@ -268,30 +266,29 @@ if run_button:
                 
                 status_box.text("✅ 運算完成，渲染中...")
                 
-                c1, c2, c3 = st.columns([1, 8, 1]) 
+                c1, c2, c3 = st.columns([1, 12, 1])
                 with c2:
                     m1, m2 = st.columns(2)
                     m1.metric("最新收盤", f"{last_price:.2f}")
                     m2.metric("精確 POC 價位", f"{poc_price:.2f}")
                     
                     st.markdown("---")
+                    # 移除了 MA 文字區塊，讓介面更清爽
 
                     buf = io.BytesIO()
-                    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight') 
+                    fig.savefig(buf, format='png', dpi=120) 
                     buf.seek(0)
-                    
-                    # ⚠️ 修正：依指示將 use_container_width=True 替換為 width="stretch"
-                    st.image(buf, width="stretch")
+                    st.image(buf, use_container_width=True)
                 
                 status_box.success(f"✨ 分析完成: {valid_symbol}")
                 
             except Exception as e:
-                status_box.error("運算錯誤")
+                status_box.error("運算錯誤 (可能是記憶體不足或網路問題)")
                 st.error(f"Error details: {e}")
             
             finally:
                 if fig is not None:
                     plt.close(fig)
-                    plt.close('all')
+                    plt.close('all') 
                 if buf is not None:
                     buf.close()
