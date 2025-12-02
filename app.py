@@ -20,8 +20,8 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="專業籌碼分析 Pro", layout="wide")
-st.title("📊 專業股票技術分析 + 精確籌碼分布 (Visual Optimized)")
+st.set_page_config(page_title="專業籌碼分析 Pro+", layout="wide")
+st.title("📊 專業股票技術分析 + 可調式籌碼分布 (V6.5)")
 st.markdown("""
 <style>
     .stApp { background-color: #f0f2f6; }
@@ -29,7 +29,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 0. 中文字體處理 (維持 V6.3 的修復版)
+# 0. 中文字體處理
 # ==========================================
 @st.cache_resource
 def get_chinese_font():
@@ -53,7 +53,7 @@ prop = get_chinese_font()
 font_name = prop.get_name() 
 
 # ==========================================
-# 1. 核心演算法：精確籌碼計算 (Method B + C)
+# 1. 核心演算法：可調式精確籌碼計算 (Method B/Fixed + C)
 # ==========================================
 
 def get_tw_tick(price):
@@ -76,24 +76,34 @@ def generate_tick_bins(low_price, high_price):
         steps += 1
     return np.array(bins)
 
-def calculate_precise_volume_profile(df):
+# 修改後的演算法：支援 Tick 模式與 Fixed 模式
+def calculate_flexible_volume_profile(df, mode='Tick', fixed_bins=100):
     min_p = df['Low'].min()
     max_p = df['High'].max()
-    edges = generate_tick_bins(min_p, max_p)
+    
+    # 1. 決定區間切分方式 (X軸)
+    if mode == 'Tick':
+        # 使用交易所真實跳動級距
+        edges = generate_tick_bins(min_p, max_p)
+    else:
+        # 使用固定格數 (適合觀察平滑的大趨勢)
+        edges = np.linspace(min_p, max_p, fixed_bins + 1)
+
     vol_hist = np.zeros(len(edges) - 1)
     
+    # 2. 均勻分佈運算 (Y軸 - Method C)
+    # 即使是 Fixed 模式，我們依然使用均勻分佈法，比單純 histogram 更準確
     lows = df['Low'].values
     highs = df['High'].values
     vols = df['Volume'].values
     
     for i in range(len(df)):
-        day_low = lows[i]
-        day_high = highs[i]
         day_vol = vols[i]
         if day_vol == 0: continue
         
-        start_idx = np.searchsorted(edges, day_low, side='right') - 1
-        end_idx = np.searchsorted(edges, day_high, side='left')
+        # 找出當日股價範圍涵蓋了哪些 Bins
+        start_idx = np.searchsorted(edges, lows[i], side='right') - 1
+        end_idx = np.searchsorted(edges, highs[i], side='left')
         
         start_idx = max(0, start_idx)
         end_idx = min(len(vol_hist), end_idx)
@@ -106,7 +116,7 @@ def calculate_precise_volume_profile(df):
     return vol_hist, edges
 
 # ==========================================
-# 2. 繪圖與數據處理 (視覺優化 V6.4)
+# 2. 繪圖與數據處理
 # ==========================================
 
 def smart_download(input_ticker, p, status_container):
@@ -125,7 +135,8 @@ def smart_download(input_ticker, p, status_container):
         except: continue
     return None, None
 
-def create_chart_precise(df, symbol):
+# 新增參數：mode, bins
+def create_chart_flexible(df, symbol, mode, bins):
     # 指標計算
     close = df['Close']
     df['MA5'] = close.rolling(5).mean()
@@ -139,35 +150,22 @@ def create_chart_precise(df, symbol):
     last_ma20 = df['MA20'].iloc[-1]
     last_ma60 = df['MA60'].iloc[-1]
 
-    # 精確籌碼運算
-    hist, edges = calculate_precise_volume_profile(df)
+    # --- 呼叫彈性演算法 ---
+    hist, edges = calculate_flexible_volume_profile(df, mode=mode, fixed_bins=bins)
+    
     max_idx = np.argmax(hist)
     poc = (edges[max_idx] + edges[max_idx+1]) / 2
 
-    # --- 視覺風格定義 (重點修改處) ---
+    # --- 視覺風格 ---
     mc = mpf.make_marketcolors(
-        up='#D32F2F',      # K線 - 深紅 (Deep Red)
-        down='#00796B',    # K線 - 深綠 (Teal Green)
-        edge='inherit', 
-        wick='inherit', 
-        # 成交量顏色優化：使用柔和的粉彩系，避免搶眼
+        up='#D32F2F', down='#00796B', edge='inherit', wick='inherit', 
         volume={'up': '#ff9999', 'down': '#80cbc4'} 
     )
     
     s = mpf.make_mpf_style(
-        base_mpf_style='yahoo', 
-        marketcolors=mc, 
-        gridstyle=':', 
-        gridcolor='#E0E0E0', 
-        facecolor='#FAFAFA', 
-        figcolor='#FFFFFF', 
-        y_on_right=True,
-        rc={
-            'font.family': font_name, 
-            'axes.unicode_minus': False,
-            'axes.labelsize': 12,
-            'axes.titlesize': 16
-        }
+        base_mpf_style='yahoo', marketcolors=mc, gridstyle=':', gridcolor='#E0E0E0', 
+        facecolor='#FAFAFA', figcolor='#FFFFFF', y_on_right=True,
+        rc={'font.family': font_name, 'axes.unicode_minus': False, 'axes.labelsize': 12, 'axes.titlesize': 16}
     )
     
     mav_colors = ['#1f77b4', '#ff7f0e', '#9467bd']
@@ -177,28 +175,27 @@ def create_chart_precise(df, symbol):
         mpf.make_addplot(df['BB_Lo'], color='slategrey', linestyle='--', width=0.8, alpha=0.5)
     ]
 
-    # 繪圖
     fig, axes = mpf.plot(
         df, type='candle', style=s, volume=True, addplot=apds,
         mav=(5, 20, 60), mavcolors=mav_colors,
-        figsize=(16, 9), 
-        panel_ratios=(3, 1), 
-        returnfig=True, 
-        tight_layout=True,
+        figsize=(16, 9), panel_ratios=(3, 1),
+        returnfig=True, tight_layout=True,
         scale_padding={'left': 0.1, 'top': 0.5, 'right': 1.2, 'bottom': 0.5} 
     )
     
     ax_main = axes[0]
     ax_vol = axes[2]
     
-    ax_main.set_title(f"{symbol} 專業技術分析 (VP Optimized)", fontproperties=prop, fontsize=20, weight='bold', pad=15)
+    # 標題加入模式說明
+    mode_text = "Tick精確模式" if mode == 'Tick' else f"固定{bins}格模式"
+    ax_main.set_title(f"{symbol} 技術分析 ({mode_text})", fontproperties=prop, fontsize=20, weight='bold', pad=15)
     ax_main.set_ylabel("價格", fontproperties=prop, fontsize=12)
     ax_vol.set_ylabel("成交量", fontproperties=prop, fontsize=12)
 
     ax_main.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.2f}'))
     ax_vol.yaxis.set_major_formatter(ticker.StrMethodFormatter('{x:,.0f}'))
 
-    # VP (Volume Profile) - 保持淺灰色與 K 線區隔
+    # VP 繪製
     ax_vp = ax_main.twiny()
     max_hist = max(hist)
     ax_vp.set_xlim(0, max_hist * 3.0) 
@@ -234,13 +231,32 @@ def create_chart_precise(df, symbol):
     return fig, poc, df['Close'].iloc[-1]
 
 # ==========================================
-# 3. 側邊欄與執行
+# 3. 側邊欄與執行 (新增精確度選項)
 # ==========================================
 with st.sidebar:
     st.header("參數設定")
     user_input = st.text_input("股票代號", value="2330").strip()
     period = st.selectbox("資料區間", ["3mo", "6mo", "1y"], index=1)
-    st.info("💡 優化項目：\n1. 成交量改為柔和配色\n2. 移除外部多餘文字")
+    
+    st.divider()
+    st.markdown("### ⚙️ POC 精確度設定")
+    
+    # 模式選擇
+    calc_mode = st.radio(
+        "計算模式", 
+        ["Tick 精確模式", "Fixed 固定格數"], 
+        index=0,
+        help="Tick模式：依交易所真實跳動計算(最準)。Fixed模式：依固定數量切分(較平滑)。"
+    )
+    
+    # 如果選固定格數，顯示滑桿
+    fixed_bins = 100
+    if calc_mode == "Fixed 固定格數":
+        fixed_bins = st.slider("格數 (Bins)", min_value=30, max_value=300, value=100, step=10)
+        final_mode = "Fixed"
+    else:
+        final_mode = "Tick"
+    
     st.divider()
     run_button = st.button("🚀 開始分析", type="primary")
 
@@ -259,10 +275,11 @@ if run_button:
             status_box.empty()
             st.error(f"❌ 查無資料: {user_input}")
         else:
-            status_box.text(f"🧮 正在運算精確籌碼...")
+            status_box.text(f"🧮 正在運算 ({final_mode} Mode)...")
             
             try:
-                fig, poc_price, last_price = create_chart_precise(df, valid_symbol)
+                # 傳入新的參數
+                fig, poc_price, last_price = create_chart_flexible(df, valid_symbol, final_mode, fixed_bins)
                 
                 status_box.text("✅ 運算完成，渲染中...")
                 
@@ -270,11 +287,9 @@ if run_button:
                 with c2:
                     m1, m2 = st.columns(2)
                     m1.metric("最新收盤", f"{last_price:.2f}")
-                    m2.metric("精確 POC 價位", f"{poc_price:.2f}")
+                    m2.metric("POC 價位", f"{poc_price:.2f}")
                     
                     st.markdown("---")
-                    # 移除了 MA 文字區塊，讓介面更清爽
-
                     buf = io.BytesIO()
                     fig.savefig(buf, format='png', dpi=120) 
                     buf.seek(0)
@@ -283,7 +298,7 @@ if run_button:
                 status_box.success(f"✨ 分析完成: {valid_symbol}")
                 
             except Exception as e:
-                status_box.error("運算錯誤 (可能是記憶體不足或網路問題)")
+                status_box.error("運算錯誤")
                 st.error(f"Error details: {e}")
             
             finally:
